@@ -1,0 +1,11 @@
+# Mengabaikan folder lingkungan virtual Python
+env/
+venv/
+__pycache__/
+
+# Mengabaikan folder instalasi React (Frontend)
+node_modules/
+dist/
+
+# Mengabaikan file sistem rahasia
+.env
