@@ -1,4 +1,6 @@
 from playwright.sync_api import sync_playwright
+import re
+import random
 
 def is_produk_relevan(nama_produk, keyword):
     nama_lower = nama_produk.lower()
@@ -16,7 +18,7 @@ def is_produk_relevan(nama_produk, keyword):
         if any(b in nama_lower for b in blacklist_elektronik):
             return False
 
-    # --- 3. LOGIKA BARU: FILTER MEREK WAJIB (DITAMBAH OTOMOTIF) ---
+    # 3. LOGIKA BARU: FILTER MEREK WAJIB
     daftar_merek = [
         # Gadget
         'iphone', 'samsung', 'macbook', 'ipad', 'lenovo', 'asus', 'xiaomi', 'oppo', 'vivo', 'infinix',
@@ -25,29 +27,19 @@ def is_produk_relevan(nama_produk, keyword):
     ]
     
     for merek in daftar_merek:
-        if merek in keyword_lower: # Jika user mencari merek tertentu (misal: hjc)
-            # Kasus khusus Apple/iPhone
+        if merek in keyword_lower:
             if merek == 'iphone' or merek == 'apple':
                 if 'iphone' not in nama_lower and 'apple' not in nama_lower:
                     return False 
-            # Jika merek HJC dicari, judul produk WAJIB ada kata HJC!
             elif merek not in nama_lower:
-                return False # Kymco dan Evolution akan langsung ditendang di sini!
-    # --------------------------------------------------------------
+                return False
 
-   # --- 4. LOGIKA BARU: FILTER KETAT TIPE/MODEL SPESIFIK ---
-    # Kita pisahkan mana kata umum dan mana kata model spesifik ("kx1", "race", "pro", dsb)
     kata_umum = ['helm', 'hp', 'laptop', 'macbook', 'iphone', 'samsung', 'asus', 'kyt', 'hjc', 'arai', 'agv', 'shoei']
     kata_spesifik = [k for k in keyword_lower.split() if k not in kata_umum and len(k) >= 2]
 
     if kata_spesifik:
-        # Hapus spasi di judul produk untuk mengatasi penjual yang menulis "KX 1" menjadi "kx1"
         judul_tanpa_spasi = nama_lower.replace(" ", "")
-        
-        # Hitung berapa banyak kata spesifik yang nyangkut di judul produk
         jumlah_cocok = sum(1 for kata in kata_spesifik if kata in nama_lower or kata.replace(" ", "") in judul_tanpa_spasi)
-        
-        # Jika tidak ada SATUPUN kata spesifik yang cocok, berarti ini produk nyasar! Buang!
         if jumlah_cocok == 0:
             return False
 
@@ -56,10 +48,13 @@ def is_produk_relevan(nama_produk, keyword):
 def jalankan_robot_tokopedia(keyword):
     print(f"\n[TOKOPEDIA] Memulai pencarian untuk: {keyword}")
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=False,  
+            args=['--no-sandbox', '--disable-dev-shm-usage']
+        )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={'width': 1920, 'height': 1080} # Pura-pura pakai monitor besar
+            viewport={'width': 1920, 'height': 1080}
         )
         page = context.new_page()
 
@@ -71,46 +66,35 @@ def jalankan_robot_tokopedia(keyword):
         
         try:
             page.wait_for_selector('text=/^Rp\s*[0-9\.]+$/', timeout=10000)
-            # --- AJARI ROBOT SCROLL KE BAWAH ---
             print("[TOKOPEDIA] Sedang men-scroll halaman untuk memuat lebih banyak barang...")
-            for i in range(10): # Lakukan 20 kali scroll
-                page.mouse.wheel(0, 1500) # Scroll ke bawah 1500 pixel
-                page.wait_for_timeout(1000) # Beri jeda 1 detik per scroll agar gambar sempat ter-load
+            for i in range(10):
+                page.mouse.wheel(0, 1500)
+                page.wait_for_timeout(1000)
             
-            # Kumpulkan semua kotak setelah selesai di-scroll (Biasanya ada 60 - 80 kotak)
             kotak_produk = page.locator('div.css-5wh65g').all()
             print(f"[TOKOPEDIA] Ditemukan {len(kotak_produk)} kotak produk mentah di halaman.")
             
-            # --- LOGIKA BARU: JANGAN BATASI DI AWAL ---
-            # Kita looping SEMUA kotak, tapi kita hentikan kalau sudah dapat 20 barang bersih
             for kotak in kotak_produk: 
-                
-                # Jika keranjang hasil pencarian sudah berisi 20 barang bersih, stop!
                 if len(hasil_pencarian) >= 50:
                     break
 
                 semua_teks = kotak.inner_text().split('\n')
                 
-                # --- STRATEGI BARU MENCARI NAMA ---
                 nama = ""
-                # Prioritas 1: Coba ambil pakai nama class CSS resmi dari Tokopedia
                 nama_locator = kotak.locator('[class*="prd_link-product-name"]')
                 if nama_locator.count() > 0:
                     nama = nama_locator.first.inner_text()
                 
-                # Prioritas 2: Jika CSS berubah, cari teks manual tapi hindari promo!
                 if not nama:
                     for t in semua_teks:
                         t_lower = t.lower()
-                        # Jika teks > 15 huruf DAN tidak mengandung kata-kata promo e-commerce
                         if len(t) > 15 and not any(promo in t_lower for promo in ["ongkir", "cashback", "diskon", "terjual", "sisa", "rb", "promo"]):
                             nama = t
                             break
 
                 if not nama or nama == "":
-                    continue # Abaikan kotak yang tidak punya nama
+                    continue
 
-                # Panggil filter cerdas
                 if not is_produk_relevan(nama, keyword):
                     continue
 
@@ -120,49 +104,62 @@ def jalankan_robot_tokopedia(keyword):
                         lokasi = t
                         break
                 
-                # --- STRATEGI BARU MENCARI HARGA ---
                 harga_teks = "0"
                 for t in semua_teks:
-                    # Cari baris yang diawali "Rp" dan mengandung angka (lebih dari 3 huruf)
                     if t.strip().startswith("Rp") and len(t) > 3:
                         harga_teks = t
                         break
 
-                import re
                 angka_bersih = re.sub(r'[^0-9]', '', harga_teks)
                 harga_angka = int(angka_bersih) if angka_bersih else 0
 
-                # FILTER HARGA PREMIUM
                 kata_premium = ['iphone', 'macbook', 'samsung s', 'samsung z', 'laptop', 'ipad', 'playstation']
                 if any(k in keyword.lower() for k in kata_premium):
                     if harga_angka < 1000000:
-                        continue # BUANG BARANG MURAH (Aksesoris)
+                        continue
                     
                 gambar_locator = kotak.locator('img')
                 gambar = gambar_locator.first.get_attribute('src')
                 if not gambar:
                     gambar = gambar_locator.first.get_attribute('data-src')
 
-                # Kalau lolos semua filter, baru masukkan ke keranjang
+                url_produk = ""
+                link_locator = kotak.locator('[class*="prd_link-product-name"]')
+                if link_locator.count() > 0:
+                    url_produk = link_locator.first.get_attribute('href') or ""
+                if not url_produk:
+                    all_links = kotak.locator('a')
+                    if all_links.count() > 0:
+                        url_produk = all_links.first.get_attribute('href') or ""
+
                 hasil_pencarian.append({
                     "platform": "Tokopedia",
                     "nama": nama,
                     "harga": harga_teks,
                     "gambar": gambar,
                     "lokasi": lokasi,
-                    "rating": "4.5", 
-                    "kondisi": "Baru"
+                    "rating": "4.5",
+                    "kondisi": "Baru",
+                    "url": url_produk
                 })
         except Exception as e:
             print(f"Gagal mengambil data. Detail error: {e}")
+        finally:
+            browser.close()
         
         return hasil_pencarian
     
 def jalankan_robot_lazada(keyword):
     print(f"\n[LAZADA] Memulai pencarian untuk: {keyword}")
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        browser = p.chromium.launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-dev-shm-usage']
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080}
+        )
         page = context.new_page()
 
         keyword_url = keyword.replace(" ", "%20")
@@ -176,11 +173,13 @@ def jalankan_robot_lazada(keyword):
             page.wait_for_selector('text=/^Rp/', timeout=15000) 
             
             print("[LAZADA] Sedang men-scroll halaman...")
-            for i in range(5): 
-                page.mouse.wheel(0, 1000)
-                page.wait_for_timeout(1000)
+            for i in range(10):
+                page.mouse.wheel(0, 800)
+                page.wait_for_timeout(800)  
             
-            # Lazada sering menggunakan atribut 'data-tracking="product-card"' atau 'data-qa-locator="product-item"'
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(1000)
+            
             kotak_produk = page.locator('div[data-tracking="product-card"]').all()
             print(f"[LAZADA] Ditemukan {len(kotak_produk)} kotak produk mentah di halaman.")
 
@@ -208,7 +207,6 @@ def jalankan_robot_lazada(keyword):
                         harga_teks = t
                         break
 
-                import re
                 angka_bersih = re.sub(r'[^0-9]', '', harga_teks)
                 harga_angka = int(angka_bersih) if angka_bersih else 0
 
@@ -222,29 +220,67 @@ def jalankan_robot_lazada(keyword):
                         lokasi = t
                         break
 
-                gambar_locator = kotak.locator('img')
-                gambar = gambar_locator.first.get_attribute('src')
+                gambar = None
+                gambar_locator = kotak.locator('img').first
+                
+                for attr in ['src', 'data-src', 'data-lazy-src', 'data-original']:
+                    try:
+                        val = gambar_locator.get_attribute(attr)
+                        if val and val.startswith('http') and 'placeholder' not in val and len(val) > 20:
+                            gambar = val
+                            break
+                    except:
+                        continue
+                
+                if not gambar:
+                    semua_img = kotak.locator('img').all()
+                    for img in semua_img:
+                        for attr in ['src', 'data-src', 'data-lazy-src', 'data-original']:
+                            try:
+                                val = img.get_attribute(attr)
+                                if val and val.startswith('http') and len(val) > 20:
+                                    gambar = val
+                                    break
+                            except:
+                                continue
+                        if gambar:
+                            break
+
+                url_produk = ""
+                all_links = kotak.locator('a')
+                if all_links.count() > 0:
+                    url_produk = all_links.first.get_attribute('href') or ""
+                if url_produk and url_produk.startswith('/'):
+                    url_produk = 'https://www.lazada.co.id' + url_produk
 
                 hasil_pencarian.append({
-                    "platform": "Lazada 💙", 
+                    "platform": "Lazada 💙",
                     "nama": nama,
-                    "harga": harga_teks, 
-                    "gambar": gambar,
+                    "harga": harga_teks,
+                    "gambar": gambar, 
                     "lokasi": lokasi,
-                    "rating": "4.7", 
-                    "kondisi": "Baru"
+                    "rating": "4.7",
+                    "kondisi": "Baru",
+                    "url": url_produk
                 })
 
         except Exception as e:
             print(f"[LAZADA] Gagal mengambil data. Detail error: {e}")
+        finally:
+            browser.close()
         
         return hasil_pencarian
-
+        
 def jalankan_robot_blibli(keyword):
     print(f"\n[BLIBLI] Memulai pencarian untuk: {keyword}")
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        browser = p.chromium.launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-dev-shm-usage']
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
         page = context.new_page()
 
         keyword_url = keyword.replace(" ", "%20")
@@ -262,7 +298,6 @@ def jalankan_robot_blibli(keyword):
                 page.mouse.wheel(0, 1000)
                 page.wait_for_timeout(1000)
             
-            # Blibli biasanya memakai class .blu-product__card atau .product__card
             kotak_produk = page.locator('div[class*="product__card"]').all()
             
             for kotak in kotak_produk: 
@@ -286,7 +321,6 @@ def jalankan_robot_blibli(keyword):
                         harga_teks = t
                         break
 
-                import re
                 angka_bersih = re.sub(r'[^0-9]', '', harga_teks)
                 harga_angka = int(angka_bersih) if angka_bersih else 0
 
@@ -303,17 +337,27 @@ def jalankan_robot_blibli(keyword):
                 gambar_locator = kotak.locator('img')
                 gambar = gambar_locator.first.get_attribute('src')
 
+                url_produk = ""
+                all_links = kotak.locator('a')
+                if all_links.count() > 0:
+                    url_produk = all_links.first.get_attribute('href') or ""
+                if url_produk and url_produk.startswith('/'):
+                    url_produk = 'https://www.blibli.com' + url_produk
+
                 hasil_pencarian.append({
-                    "platform": "Blibli 🛍️", 
+                    "platform": "Blibli 🛍️",
                     "nama": nama,
-                    "harga": harga_teks, 
+                    "harga": harga_teks,
                     "gambar": gambar,
                     "lokasi": lokasi,
-                    "rating": "4.9", 
-                    "kondisi": "Baru"
+                    "rating": "4.9",
+                    "kondisi": "Baru",
+                    "url": url_produk
                 })
 
         except Exception as e:
             print(f"[BLIBLI] Gagal mengambil data. Detail error: {e}")
+        finally:
+            browser.close()
         
         return hasil_pencarian
