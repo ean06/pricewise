@@ -22,7 +22,7 @@ const LOKASI_ITEMS = [
   { id: 'bali',     label: 'Bali' },
 ];
 
-const SUGGESTIONS = ['iPhone 15 Pro', 'Laptop Gaming', 'Air Jordan', 'Samsung S24', 'Smartwatch'];
+const SUGGESTIONS = ['iPhone 15 Pro 256gb', 'Laptop Gaming', 'Air Jordan', 'Samsung S24 256gb', 'Smartwatch'];
 
 // ── Helper: parse harga string → angka ───────────────────────────
 const parseHarga = (str = '') => {

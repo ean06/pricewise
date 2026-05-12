@@ -49,7 +49,7 @@ def jalankan_robot_tokopedia(keyword):
     print(f"\n[TOKOPEDIA] Memulai pencarian untuk: {keyword}")
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=False,  
+            headless=True,  
             args=['--no-sandbox', '--disable-dev-shm-usage']
         )
         context = browser.new_context(
