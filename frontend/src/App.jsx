@@ -84,7 +84,10 @@ function App() {
         return;
       }
       setSumberData('🤖 Apex robot sedang mengambil data dari E-Commerce...');
-      const response = await axios.get(`http://127.0.0.1:5000/api/cari?keyword=${keyword}`);
+      //local
+      // const response = await axios.get(`http://127.0.0.1:5000/api/cari?keyword=${keyword}`);
+      //railway
+      const response = await axios.get(`https://pricewise-production-dc91.up.railway.app/api/cari?keyword=${keyword}`);
       const dataBaru = response.data.data;
       setHasil(dataBaru);
       setSumberData('✅ Data disimpan ke Memori Lokal.');
